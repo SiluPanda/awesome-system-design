@@ -55,37 +55,37 @@
 ## 3. Where to Place the Rate Limiter
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                    Placement Options                              │
-│                                                                   │
-│  Option 1: Client-Side                                           │
-│  ┌────────┐                                                      │
-│  │ Client │──── self-throttle ──── ❌ Unreliable, bypassable    │
-│  └────────┘                                                      │
-│                                                                   │
-│  Option 2: API Gateway / Middleware (L7)                         │
-│  ┌────────┐    ┌──────────────┐    ┌────────────┐               │
-│  │ Client │───▶│  API Gateway  │───▶│ App Server │               │
-│  └────────┘    │  ┌──────────┐│    └────────────┘               │
-│                │  │Rate Limit││   ✅ Best for most cases        │
-│                │  └──────────┘│                                   │
-│                └──────────────┘                                   │
-│                                                                   │
-│  Option 3: Application-Level (in-process)                        │
-│  ┌────────┐    ┌─────────────────────┐                          │
-│  │ Client │───▶│ App Server           │                          │
-│  └────────┘    │  ┌────────────────┐ │                          │
-│                │  │ Rate Limiter   │ │   ⚠️ Only works for     │
-│                │  │ (in-process)   │ │     single-server        │
-│                │  └────────────────┘ │                          │
-│                └─────────────────────┘                          │
-│                                                                   │
-│  Option 4: Sidecar / Service Mesh                                │
-│  ┌────────┐    ┌────────┐    ┌────────────┐                    │
-│  │ Client │───▶│Envoy/  │───▶│ App Server │                    │
-│  └────────┘    │Sidecar │    └────────────┘                    │
-│                └────────┘   ✅ Good for microservices           │
-└──────────────────────────────────────────────────────────────────┘
++------------------------------------------------------------------+
+|                    Placement Options                              |
+|                                                                   |
+|  Option 1: Client-Side                                           |
+|  +--------+                                                      |
+|  | Client |---- self-throttle ---- ❌ Unreliable, bypassable    |
+|  +--------+                                                      |
+|                                                                   |
+|  Option 2: API Gateway / Middleware (L7)                         |
+|  +--------+    +--------------+    +------------+               |
+|  | Client |--->|  API Gateway  |--->| App Server |               |
+|  +--------+    |  +----------+|    +------------+               |
+|                |  |Rate Limit||   ✅ Best for most cases        |
+|                |  +----------+|                                   |
+|                +--------------+                                   |
+|                                                                   |
+|  Option 3: Application-Level (in-process)                        |
+|  +--------+    +---------------------+                          |
+|  | Client |--->| App Server           |                          |
+|  +--------+    |  +----------------+ |                          |
+|                |  | Rate Limiter   | |   ⚠️ Only works for     |
+|                |  | (in-process)   | |     single-server        |
+|                |  +----------------+ |                          |
+|                +---------------------+                          |
+|                                                                   |
+|  Option 4: Sidecar / Service Mesh                                |
+|  +--------+    +--------+    +------------+                    |
+|  | Client |--->|Envoy/  |--->| App Server |                    |
+|  +--------+    |Sidecar |    +------------+                    |
+|                +--------+   ✅ Good for microservices           |
++------------------------------------------------------------------+
 ```
 
 **Recommendation: API Gateway / Middleware layer** — centralized, language-agnostic, applied before business logic runs.
@@ -99,27 +99,27 @@
 The most common algorithm. Used by AWS, Stripe, and most cloud APIs.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Token Bucket                       │
-│                                                      │
-│   Bucket Capacity: 10 tokens                        │
-│   Refill Rate: 2 tokens/second                      │
-│                                                      │
-│   ┌─────────────────────────┐                       │
-│   │ ● ● ● ● ● ● ● ○ ○ ○   │  7 tokens remaining   │
-│   └─────────────────────────┘                       │
-│           ▲           │                              │
-│           │           ▼                              │
-│     Refill at      Consume 1                        │
-│     constant       token per                        │
-│     rate           request                          │
-│                                                      │
-│   Request arrives:                                  │
-│     tokens > 0 → allow, tokens -= 1                │
-│     tokens == 0 → reject (429)                     │
-│                                                      │
-│   Every 1/rate seconds → tokens = min(tokens+1, cap)│
-└─────────────────────────────────────────────────────┘
++-----------------------------------------------------+
+|                   Token Bucket                       |
+|                                                      |
+|   Bucket Capacity: 10 tokens                        |
+|   Refill Rate: 2 tokens/second                      |
+|                                                      |
+|   +-------------------------+                       |
+|   | * * * * * * * o o o   |  7 tokens remaining   |
+|   +-------------------------+                       |
+|           ^           |                              |
+|           |           v                              |
+|     Refill at      Consume 1                        |
+|     constant       token per                        |
+|     rate           request                          |
+|                                                      |
+|   Request arrives:                                  |
+|     tokens > 0 → allow, tokens -= 1                |
+|     tokens == 0 → reject (429)                     |
+|                                                      |
+|   Every 1/rate seconds → tokens = min(tokens+1, cap)|
++-----------------------------------------------------+
 ```
 
 **State per bucket:** `{ tokens: float, last_refill: timestamp }`
@@ -154,27 +154,27 @@ function allow_request(key, capacity, refill_rate):
 Requests enter a FIFO queue and are processed at a fixed rate. Overflow is rejected.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Leaky Bucket                       │
-│                                                      │
-│   Queue Capacity: 5                                 │
-│   Leak Rate: 2 requests/second                      │
-│                                                      │
-│   Incoming requests                                 │
-│        │ │ │                                        │
-│        ▼ ▼ ▼                                        │
-│   ┌──────────┐                                      │
-│   │ ■ ■ ■ ■ □│  4 in queue                         │
-│   └────┬─────┘                                      │
-│        │  leak (process) at fixed rate              │
-│        ▼                                            │
-│   ┌──────────┐                                      │
-│   │  Server   │                                      │
-│   └──────────┘                                      │
-│                                                      │
-│   Queue full → reject (429)                         │
-│   Queue not full → enqueue                          │
-└─────────────────────────────────────────────────────┘
++-----------------------------------------------------+
+|                   Leaky Bucket                       |
+|                                                      |
+|   Queue Capacity: 5                                 |
+|   Leak Rate: 2 requests/second                      |
+|                                                      |
+|   Incoming requests                                 |
+|        | | |                                        |
+|        v v v                                        |
+|   +----------+                                      |
+|   | # # # # o|  4 in queue                         |
+|   +----+-----+                                      |
+|        |  leak (process) at fixed rate              |
+|        v                                            |
+|   +----------+                                      |
+|   |  Server   |                                      |
+|   +----------+                                      |
+|                                                      |
+|   Queue full → reject (429)                         |
+|   Queue not full → enqueue                          |
++-----------------------------------------------------+
 ```
 
 | Pros | Cons |
@@ -188,27 +188,27 @@ Requests enter a FIFO queue and are processed at a fixed rate. Overflow is rejec
 Divide time into fixed windows (e.g., 1-minute intervals). Count requests per window.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│               Fixed Window Counter                   │
-│                                                      │
-│   Window Size: 1 minute    Limit: 100 requests      │
-│                                                      │
-│   Timeline:                                         │
-│   │◄──── Window 1 ────▶│◄──── Window 2 ────▶│      │
-│   │    12:00 - 12:01    │    12:01 - 12:02    │      │
-│   │                     │                     │      │
-│   │   count: 78 ✅      │   count: 45 ✅      │      │
-│   │                     │                     │      │
-│   ┌─────────────────────────────────────────┐       │
-│   │  PROBLEM: Boundary spike                 │       │
-│   │                                          │       │
-│   │  12:00:30 — 12:01:00: 90 requests       │       │
-│   │  12:01:00 — 12:01:30: 95 requests       │       │
-│   │                                          │       │
-│   │  Each window is under 100, but the      │       │
-│   │  user sent 185 requests in 1 minute!    │       │
-│   └─────────────────────────────────────────┘       │
-└─────────────────────────────────────────────────────┘
++-----------------------------------------------------+
+|               Fixed Window Counter                   |
+|                                                      |
+|   Window Size: 1 minute    Limit: 100 requests      |
+|                                                      |
+|   Timeline:                                         |
+|   |◄---- Window 1 ---->|◄---- Window 2 ---->|      |
+|   |    12:00 - 12:01    |    12:01 - 12:02    |      |
+|   |                     |                     |      |
+|   |   count: 78 ✅      |   count: 45 ✅      |      |
+|   |                     |                     |      |
+|   +-----------------------------------------+       |
+|   |  PROBLEM: Boundary spike                 |       |
+|   |                                          |       |
+|   |  12:00:30 — 12:01:00: 90 requests       |       |
+|   |  12:01:00 — 12:01:30: 95 requests       |       |
+|   |                                          |       |
+|   |  Each window is under 100, but the      |       |
+|   |  user sent 185 requests in 1 minute!    |       |
+|   +-----------------------------------------+       |
++-----------------------------------------------------+
 ```
 
 **State per bucket:** `{ count: int, window_start: timestamp }`
@@ -224,23 +224,23 @@ Divide time into fixed windows (e.g., 1-minute intervals). Count requests per wi
 Store the timestamp of each request. Count requests within the trailing window.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│               Sliding Window Log                     │
-│                                                      │
-│   Window: 1 minute    Limit: 5 requests             │
-│                                                      │
-│   Log: [12:00:10, 12:00:25, 12:00:40,              │
-│          12:00:50, 12:01:05]                        │
-│                                                      │
-│   New request at 12:01:15:                          │
-│   1. Remove entries older than 12:00:15             │
-│      → Remove 12:00:10                              │
-│   2. Count remaining: 4                             │
-│   3. 4 < 5 → ALLOW, add 12:01:15 to log           │
-│                                                      │
-│   Log: [12:00:25, 12:00:40, 12:00:50,              │
-│          12:01:05, 12:01:15]                        │
-└─────────────────────────────────────────────────────┘
++-----------------------------------------------------+
+|               Sliding Window Log                     |
+|                                                      |
+|   Window: 1 minute    Limit: 5 requests             |
+|                                                      |
+|   Log: [12:00:10, 12:00:25, 12:00:40,              |
+|          12:00:50, 12:01:05]                        |
+|                                                      |
+|   New request at 12:01:15:                          |
+|   1. Remove entries older than 12:00:15             |
+|      → Remove 12:00:10                              |
+|   2. Count remaining: 4                             |
+|   3. 4 < 5 → ALLOW, add 12:01:15 to log           |
+|                                                      |
+|   Log: [12:00:25, 12:00:40, 12:00:50,              |
+|          12:01:05, 12:01:15]                        |
++-----------------------------------------------------+
 ```
 
 | Pros | Cons |
@@ -255,33 +255,33 @@ Store the timestamp of each request. Count requests within the trailing window.
 Combines fixed window simplicity with sliding window accuracy. Used by Cloudflare, Kong.
 
 ```
-┌─────────────────────────────────────────────────────┐
-│            Sliding Window Counter (Hybrid)            │
-│                                                      │
-│   Window: 1 minute    Limit: 100 requests           │
-│                                                      │
-│   Previous window (12:00-12:01): 84 requests        │
-│   Current window  (12:01-12:02): 36 requests        │
-│                                                      │
-│   Current time: 12:01:15 (25% into current window)  │
-│                                                      │
-│   Weighted count = current + previous × overlap%    │
-│                  = 36 + 84 × 0.75                   │
-│                  = 36 + 63                           │
-│                  = 99                                │
-│                                                      │
-│   99 < 100 → ALLOW ✅                               │
-│                                                      │
-│   ┌────────────────────┬────────────────────┐       │
-│   │   Previous Window   │   Current Window   │       │
-│   │      84 reqs        │      36 reqs       │       │
-│   │                     │                    │       │
-│   │   ◄── 75% overlap ─┤── 25% elapsed ──▶  │       │
-│   │                     │ ▲                  │       │
-│   └────────────────────┴─┼──────────────────┘       │
-│                          │                           │
-│                      NOW (12:01:15)                  │
-└─────────────────────────────────────────────────────┘
++-----------------------------------------------------+
+|            Sliding Window Counter (Hybrid)            |
+|                                                      |
+|   Window: 1 minute    Limit: 100 requests           |
+|                                                      |
+|   Previous window (12:00-12:01): 84 requests        |
+|   Current window  (12:01-12:02): 36 requests        |
+|                                                      |
+|   Current time: 12:01:15 (25% into current window)  |
+|                                                      |
+|   Weighted count = current + previous × overlap%    |
+|                  = 36 + 84 × 0.75                   |
+|                  = 36 + 63                           |
+|                  = 99                                |
+|                                                      |
+|   99 < 100 → ALLOW ✅                               |
+|                                                      |
+|   +--------------------+--------------------+       |
+|   |   Previous Window   |   Current Window   |       |
+|   |      84 reqs        |      36 reqs       |       |
+|   |                     |                    |       |
+|   |   ◄-- 75% overlap -+-- 25% elapsed -->  |       |
+|   |                     | ^                  |       |
+|   +--------------------+-+------------------+       |
+|                          |                           |
+|                      NOW (12:01:15)                  |
++-----------------------------------------------------+
 ```
 
 **State per bucket:** `{ prev_count: int, curr_count: int, window_start: timestamp }` — only 20 bytes!
@@ -317,73 +317,73 @@ weighted_count = current_count + previous_count × overlap_ratio
 ## 6. High-Level Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                      Rate Limiter Architecture                        │
-│                                                                       │
-│  ┌────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────┐ │
-│  │ Client │───▶│   API Gateway │───▶│ Rate Limiter │───▶│   App    │ │
-│  └────────┘    │   / LB       │    │  Middleware   │    │  Server  │ │
-│                └──────────────┘    └──────┬───────┘    └──────────┘ │
-│                                          │                          │
-│                                          ▼                          │
-│                                   ┌──────────────┐                  │
-│                                   │  Redis Cluster│                  │
-│                                   │  (Counter     │                  │
-│                                   │   Storage)    │                  │
-│                                   └──────┬───────┘                  │
-│                                          │                          │
-│                                          ▼                          │
-│                                   ┌──────────────┐                  │
-│                                   │  Rules Engine │                  │
-│                                   │  (Config DB)  │                  │
-│                                   └──────────────┘                  │
-└──────────────────────────────────────────────────────────────────────┘
++----------------------------------------------------------------------+
+|                      Rate Limiter Architecture                        |
+|                                                                       |
+|  +--------+    +--------------+    +--------------+    +----------+ |
+|  | Client |--->|   API Gateway |--->| Rate Limiter |--->|   App    | |
+|  +--------+    |   / LB       |    |  Middleware   |    |  Server  | |
+|                +--------------+    +------+-------+    +----------+ |
+|                                          |                          |
+|                                          v                          |
+|                                   +--------------+                  |
+|                                   |  Redis Cluster|                  |
+|                                   |  (Counter     |                  |
+|                                   |   Storage)    |                  |
+|                                   +------+-------+                  |
+|                                          |                          |
+|                                          v                          |
+|                                   +--------------+                  |
+|                                   |  Rules Engine |                  |
+|                                   |  (Config DB)  |                  |
+|                                   +--------------+                  |
++----------------------------------------------------------------------+
 ```
 
 ### Detailed Component Architecture
 
 ```
-                         ┌─────────────────────────────────┐
-                         │          Load Balancer           │
-                         └──────────────┬──────────────────┘
-                                        │
-               ┌────────────────────────┼────────────────────────┐
-               ▼                        ▼                        ▼
-      ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-      │   App Server 1   │    │   App Server 2   │    │   App Server N   │
-      │  ┌─────────────┐ │    │  ┌─────────────┐ │    │  ┌─────────────┐ │
-      │  │ Rate Limit  │ │    │  │ Rate Limit  │ │    │  │ Rate Limit  │ │
-      │  │ Middleware   │ │    │  │ Middleware   │ │    │  │ Middleware   │ │
-      │  └──────┬──────┘ │    │  └──────┬──────┘ │    │  └──────┬──────┘ │
-      │         │        │    │         │        │    │         │        │
-      │  ┌──────▼──────┐ │    │  ┌──────▼──────┐ │    │  ┌──────▼──────┐ │
-      │  │ Local Cache │ │    │  │ Local Cache │ │    │  │ Local Cache │ │
-      │  │ (Rules, 30s)│ │    │  │ (Rules, 30s)│ │    │  │ (Rules, 30s)│ │
-      │  └─────────────┘ │    │  └─────────────┘ │    │  └─────────────┘ │
-      └─────────┬────────┘    └─────────┬────────┘    └─────────┬────────┘
-                │                       │                       │
-                └───────────────────────┼───────────────────────┘
-                                        │
-                           ┌────────────▼────────────┐
-                           │     Redis Cluster        │
-                           │                          │
-                           │  ┌──────┐  ┌──────┐    │
-                           │  │Master│  │Master│    │
-                           │  │  1   │  │  2   │    │
-                           │  └──┬───┘  └──┬───┘    │
-                           │     │         │        │
-                           │  ┌──▼───┐  ┌──▼───┐    │
-                           │  │Replica│  │Replica│    │
-                           │  └──────┘  └──────┘    │
-                           └─────────────────────────┘
-                                        │
-                           ┌────────────▼────────────┐
-                           │     Rules Config DB      │
-                           │  (PostgreSQL / etcd)     │
-                           │                          │
-                           │  Rules loaded on startup │
-                           │  & refreshed every 30s   │
-                           └──────────────────────────┘
+                         +---------------------------------+
+                         |          Load Balancer           |
+                         +--------------+------------------+
+                                        |
+               +------------------------+------------------------+
+               v                        v                        v
+      +-----------------+    +-----------------+    +-----------------+
+      |   App Server 1   |    |   App Server 2   |    |   App Server N   |
+      |  +-------------+ |    |  +-------------+ |    |  +-------------+ |
+      |  | Rate Limit  | |    |  | Rate Limit  | |    |  | Rate Limit  | |
+      |  | Middleware   | |    |  | Middleware   | |    |  | Middleware   | |
+      |  +------+------+ |    |  +------+------+ |    |  +------+------+ |
+      |         |        |    |         |        |    |         |        |
+      |  +------v------+ |    |  +------v------+ |    |  +------v------+ |
+      |  | Local Cache | |    |  | Local Cache | |    |  | Local Cache | |
+      |  | (Rules, 30s)| |    |  | (Rules, 30s)| |    |  | (Rules, 30s)| |
+      |  +-------------+ |    |  +-------------+ |    |  +-------------+ |
+      +---------+--------+    +---------+--------+    +---------+--------+
+                |                       |                       |
+                +-----------------------+-----------------------+
+                                        |
+                           +------------v------------+
+                           |     Redis Cluster        |
+                           |                          |
+                           |  +------+  +------+    |
+                           |  |Master|  |Master|    |
+                           |  |  1   |  |  2   |    |
+                           |  +--+---+  +--+---+    |
+                           |     |         |        |
+                           |  +--v---+  +--v---+    |
+                           |  |Replica|  |Replica|    |
+                           |  +------+  +------+    |
+                           +-------------------------+
+                                        |
+                           +------------v------------+
+                           |     Rules Config DB      |
+                           |  (PostgreSQL / etcd)     |
+                           |                          |
+                           |  Rules loaded on startup |
+                           |  & refreshed every 30s   |
+                           +--------------------------+
 ```
 
 ---
@@ -393,23 +393,23 @@ weighted_count = current_count + previous_count × overlap_ratio
 ### Rate Limit Rules
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                     rate_limit_rules                          │
-├────────────────┬──────────────┬───────────────────────────────┤
-│ Column         │ Type         │ Notes                         │
-├────────────────┼──────────────┼───────────────────────────────┤
-│ rule_id        │ UUID         │ PRIMARY KEY                   │
-│ name           │ VARCHAR(100) │ Human-readable name           │
-│ scope          │ ENUM         │ USER, IP, API_KEY, ENDPOINT   │
-│ endpoint       │ VARCHAR(200) │ "/api/v1/*" (glob pattern)    │
-│ max_requests   │ INT          │ Limit count                   │
-│ window_seconds │ INT          │ Time window in seconds        │
-│ action         │ ENUM         │ REJECT, THROTTLE, LOG_ONLY    │
-│ enabled        │ BOOLEAN      │ Toggle without deletion       │
-│ priority       │ INT          │ Higher = evaluated first      │
-│ created_at     │ TIMESTAMP    │                               │
-│ updated_at     │ TIMESTAMP    │                               │
-└────────────────┴──────────────┴───────────────────────────────┘
++--------------------------------------------------------------+
+|                     rate_limit_rules                          |
++----------------+--------------+-------------------------------+
+| Column         | Type         | Notes                         |
++----------------+--------------+-------------------------------+
+| rule_id        | UUID         | PRIMARY KEY                   |
+| name           | VARCHAR(100) | Human-readable name           |
+| scope          | ENUM         | USER, IP, API_KEY, ENDPOINT   |
+| endpoint       | VARCHAR(200) | "/api/v1/*" (glob pattern)    |
+| max_requests   | INT          | Limit count                   |
+| window_seconds | INT          | Time window in seconds        |
+| action         | ENUM         | REJECT, THROTTLE, LOG_ONLY    |
+| enabled        | BOOLEAN      | Toggle without deletion       |
+| priority       | INT          | Higher = evaluated first      |
+| created_at     | TIMESTAMP    |                               |
+| updated_at     | TIMESTAMP    |                               |
++----------------+--------------+-------------------------------+
 ```
 
 ### Redis Key Schema
@@ -483,78 +483,78 @@ DELETE /admin/rate-limits/rules/:rule_id
 
 ```
 Client              API Gateway         Rate Limiter          Redis           App Server
-  │                     │                    │                   │                │
-  │── GET /api/data ───▶│                    │                   │                │
-  │                     │── extract key ────▶│                   │                │
-  │                     │  (user_id, IP,     │                   │                │
-  │                     │   API key)         │                   │                │
-  │                     │                    │                   │                │
-  │                     │                    │── MULTI ─────────▶│                │
-  │                     │                    │   GET prev_window │                │
-  │                     │                    │   INCR curr_window│                │
-  │                     │                    │   EXPIRE (TTL)    │                │
-  │                     │                    │   EXEC            │                │
-  │                     │                    │◀── [84, 37, OK] ──│                │
-  │                     │                    │                   │                │
-  │                     │                    │── compute ────────│                │
-  │                     │                    │   weighted_count  │                │
-  │                     │                    │   = 37 + 84×0.75  │                │
-  │                     │                    │   = 100           │                │
-  │                     │                    │                   │                │
-  │                     │                    │── 100 <= 100 ─────│                │
-  │                     │                    │   ALLOW ✅        │                │
-  │                     │                    │                   │                │
-  │                     │◀── set headers ────│                   │                │
-  │                     │   X-RateLimit-*    │                   │                │
-  │                     │                    │                   │                │
-  │                     │── forward ─────────────────────────────────────────────▶│
-  │◀── 200 OK ─────────│◀──────────────────────────────────────────── response ──│
-  │  + rate limit hdrs  │                    │                   │                │
+  |                     |                    |                   |                |
+  |-- GET /api/data --->|                    |                   |                |
+  |                     |-- extract key ---->|                   |                |
+  |                     |  (user_id, IP,     |                   |                |
+  |                     |   API key)         |                   |                |
+  |                     |                    |                   |                |
+  |                     |                    |-- MULTI --------->|                |
+  |                     |                    |   GET prev_window |                |
+  |                     |                    |   INCR curr_window|                |
+  |                     |                    |   EXPIRE (TTL)    |                |
+  |                     |                    |   EXEC            |                |
+  |                     |                    |<-- [84, 37, OK] --|                |
+  |                     |                    |                   |                |
+  |                     |                    |-- compute --------|                |
+  |                     |                    |   weighted_count  |                |
+  |                     |                    |   = 37 + 84×0.75  |                |
+  |                     |                    |   = 100           |                |
+  |                     |                    |                   |                |
+  |                     |                    |-- 100 <= 100 -----|                |
+  |                     |                    |   ALLOW ✅        |                |
+  |                     |                    |                   |                |
+  |                     |<-- set headers ----|                   |                |
+  |                     |   X-RateLimit-*    |                   |                |
+  |                     |                    |                   |                |
+  |                     |-- forward --------------------------------------------->|
+  |<-- 200 OK ---------|<-------------------------------------------- response --|
+  |  + rate limit hdrs  |                    |                   |                |
 ```
 
 ### Throttled Request Flow
 
 ```
 Client              Rate Limiter          Redis
-  │                     │                   │
-  │── GET /api/data ───▶│                   │
-  │                     │── check ─────────▶│
-  │                     │◀── count: 105 ────│
-  │                     │                   │
-  │                     │── 105 > 100 ──────│
-  │                     │   REJECT ❌       │
-  │                     │                   │
-  │◀── 429 Too Many ───│                   │
-  │    Retry-After: 23  │                   │
-  │                     │                   │
+  |                     |                   |
+  |-- GET /api/data --->|                   |
+  |                     |-- check --------->|
+  |                     |<-- count: 105 ----|
+  |                     |                   |
+  |                     |-- 105 > 100 ------|
+  |                     |   REJECT ❌       |
+  |                     |                   |
+  |<-- 429 Too Many ---|                   |
+  |    Retry-After: 23  |                   |
+  |                     |                   |
 ```
 
 ### Rule Evaluation Flow
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                  Rule Evaluation Pipeline                     │
-│                                                              │
-│  Request: POST /api/v1/orders from user_123, IP 1.2.3.4    │
-│                                                              │
-│  Step 1: Load applicable rules (cached, refreshed every 30s)│
-│  ┌──────────────────────────────────────────────────┐       │
-│  │ Rule 1: Global     → 10,000 req/min (all users) │       │
-│  │ Rule 2: Per-User   → 100 req/min (per user_id)  │       │
-│  │ Rule 3: Per-IP     → 50 req/min (per IP)        │       │
-│  │ Rule 4: Per-Endpoint → 20 req/min (POST /orders)│       │
-│  └──────────────────────────────────────────────────┘       │
-│                                                              │
-│  Step 2: Evaluate ALL rules (most restrictive wins)         │
-│  ┌──────────────────────────────────────┐                   │
-│  │ Rule 1: 8,432 / 10,000 → ✅ ALLOW   │                   │
-│  │ Rule 2:    87 /    100 → ✅ ALLOW   │                   │
-│  │ Rule 3:    49 /     50 → ✅ ALLOW   │                   │
-│  │ Rule 4:    20 /     20 → ❌ REJECT  │ ← triggers       │
-│  └──────────────────────────────────────┘                   │
-│                                                              │
-│  Step 3: Return 429 with Rule 4's reset time                │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+|                  Rule Evaluation Pipeline                     |
+|                                                              |
+|  Request: POST /api/v1/orders from user_123, IP 1.2.3.4    |
+|                                                              |
+|  Step 1: Load applicable rules (cached, refreshed every 30s)|
+|  +--------------------------------------------------+       |
+|  | Rule 1: Global     → 10,000 req/min (all users) |       |
+|  | Rule 2: Per-User   → 100 req/min (per user_id)  |       |
+|  | Rule 3: Per-IP     → 50 req/min (per IP)        |       |
+|  | Rule 4: Per-Endpoint → 20 req/min (POST /orders)|       |
+|  +--------------------------------------------------+       |
+|                                                              |
+|  Step 2: Evaluate ALL rules (most restrictive wins)         |
+|  +--------------------------------------+                   |
+|  | Rule 1: 8,432 / 10,000 → ✅ ALLOW   |                   |
+|  | Rule 2:    87 /    100 → ✅ ALLOW   |                   |
+|  | Rule 3:    49 /     50 → ✅ ALLOW   |                   |
+|  | Rule 4:    20 /     20 → ❌ REJECT  | ← triggers       |
+|  +--------------------------------------+                   |
+|                                                              |
+|  Step 3: Return 429 with Rule 4's reset time                |
++-------------------------------------------------------------+
 ```
 
 ---
@@ -661,17 +661,17 @@ With N app servers, each checking Redis independently, we need:
 ### Strategy 1: Centralized Redis (Simple)
 
 ```
-┌────────────┐  ┌────────────┐  ┌────────────┐
-│ App Server 1│  │ App Server 2│  │ App Server N│
-└──────┬─────┘  └──────┬─────┘  └──────┬─────┘
-       │               │               │
-       └───────────────┼───────────────┘
-                       ▼
-              ┌────────────────┐
-              │  Redis Cluster  │
-              │  (Single source │
-              │   of truth)    │
-              └────────────────┘
++------------+  +------------+  +------------+
+| App Server 1|  | App Server 2|  | App Server N|
++------+-----+  +------+-----+  +------+-----+
+       |               |               |
+       +---------------+---------------+
+                       v
+              +----------------+
+              |  Redis Cluster  |
+              |  (Single source |
+              |   of truth)    |
+              +----------------+
 
 Pros: Simple, accurate
 Cons: Redis becomes bottleneck, cross-AZ latency
@@ -680,29 +680,29 @@ Cons: Redis becomes bottleneck, cross-AZ latency
 ### Strategy 2: Local Counter + Periodic Sync
 
 ```
-┌───────────────────────────────────────────────────────┐
-│         Local Counter + Periodic Sync                  │
-│                                                        │
-│  ┌──────────────┐  ┌──────────────┐                   │
-│  │ App Server 1  │  │ App Server 2  │                   │
-│  │               │  │               │                   │
-│  │ Local: 23     │  │ Local: 18     │                   │
-│  │               │  │               │                   │
-│  │ Sync every 1s │  │ Sync every 1s │                   │
-│  └──────┬───────┘  └──────┬───────┘                   │
-│         │                 │                            │
-│         └────────┬────────┘                            │
-│                  ▼                                     │
-│         ┌────────────────┐                             │
-│         │     Redis       │                             │
-│         │  Global: 41     │                             │
-│         └────────────────┘                             │
-│                                                        │
-│  Each server gets a "budget" of limit/N requests      │
-│  Sync periodically to reconcile                       │
-│                                                        │
-│  Tradeoff: Less accurate, but much lower latency      │
-└───────────────────────────────────────────────────────┘
++-------------------------------------------------------+
+|         Local Counter + Periodic Sync                  |
+|                                                        |
+|  +--------------+  +--------------+                   |
+|  | App Server 1  |  | App Server 2  |                   |
+|  |               |  |               |                   |
+|  | Local: 23     |  | Local: 18     |                   |
+|  |               |  |               |                   |
+|  | Sync every 1s |  | Sync every 1s |                   |
+|  +------+-------+  +------+-------+                   |
+|         |                 |                            |
+|         +--------+--------+                            |
+|                  v                                     |
+|         +----------------+                             |
+|         |     Redis       |                             |
+|         |  Global: 41     |                             |
+|         +----------------+                             |
+|                                                        |
+|  Each server gets a "budget" of limit/N requests      |
+|  Sync periodically to reconcile                       |
+|                                                        |
+|  Tradeoff: Less accurate, but much lower latency      |
++-------------------------------------------------------+
 ```
 
 **How it works:**
@@ -715,26 +715,26 @@ Cons: Redis becomes bottleneck, cross-AZ latency
 ### Strategy 3: Redis + Local Cache (Hybrid) ⭐ Recommended
 
 ```
-┌───────────────────────────────────────────────────────┐
-│              Hybrid: Redis + Local Cache               │
-│                                                        │
-│  For each request:                                    │
-│                                                        │
-│  1. Check local in-memory cache                       │
-│     → If DEFINITELY over limit (cached rejection)    │
-│       → REJECT immediately (no Redis call)           │
-│                                                        │
-│  2. If unsure, check Redis                            │
-│     → Atomic Lua script (INCR + check)               │
-│     → Cache result locally for 100ms                 │
-│                                                        │
-│  3. For high-volume keys (>1000 RPS):                │
-│     → Batch local counts, sync to Redis every 100ms  │
-│     → Reduces Redis ops from 1000/s to 10/s per key  │
-│                                                        │
-│  Result: ~90% of checks served from local cache       │
-│          Redis calls reduced by 10x                   │
-└───────────────────────────────────────────────────────┘
++-------------------------------------------------------+
+|              Hybrid: Redis + Local Cache               |
+|                                                        |
+|  For each request:                                    |
+|                                                        |
+|  1. Check local in-memory cache                       |
+|     → If DEFINITELY over limit (cached rejection)    |
+|       → REJECT immediately (no Redis call)           |
+|                                                        |
+|  2. If unsure, check Redis                            |
+|     → Atomic Lua script (INCR + check)               |
+|     → Cache result locally for 100ms                 |
+|                                                        |
+|  3. For high-volume keys (>1000 RPS):                |
+|     → Batch local counts, sync to Redis every 100ms  |
+|     → Reduces Redis ops from 1000/s to 10/s per key  |
+|                                                        |
+|  Result: ~90% of checks served from local cache       |
+|          Redis calls reduced by 10x                   |
++-------------------------------------------------------+
 ```
 
 ---
@@ -742,31 +742,31 @@ Cons: Redis becomes bottleneck, cross-AZ latency
 ## 12. Multi-Datacenter Rate Limiting
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│            Multi-Datacenter Rate Limiting                    │
-│                                                              │
-│  ┌──────────────────┐         ┌──────────────────┐          │
-│  │   US-East DC      │         │   EU-West DC      │          │
-│  │                    │         │                    │          │
-│  │  ┌──────────────┐ │         │  ┌──────────────┐ │          │
-│  │  │ App Servers   │ │   ◄──── async ────▶  │ App Servers   │ │          │
-│  │  └──────┬───────┘ │  replication │  └──────┬───────┘ │          │
-│  │         │         │         │         │         │          │
-│  │  ┌──────▼───────┐ │         │  ┌──────▼───────┐ │          │
-│  │  │ Local Redis   │ │         │  │ Local Redis   │ │          │
-│  │  │ (Primary for  │ │         │  │ (Primary for  │ │          │
-│  │  │  US users)    │ │         │  │  EU users)    │ │          │
-│  │  └──────────────┘ │         │  └──────────────┘ │          │
-│  └──────────────────┘         └──────────────────┘          │
-│                                                              │
-│  Options:                                                   │
-│  A) Sticky routing — user always hits same DC (simple)     │
-│  B) Async sync — each DC syncs counters (slightly loose)   │
-│  C) Global Redis — single source of truth (high latency)   │
-│                                                              │
-│  Recommendation: Option B with gossip protocol              │
-│  Acceptable to allow ~2x burst across DCs briefly           │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+|            Multi-Datacenter Rate Limiting                    |
+|                                                              |
+|  +------------------+         +------------------+          |
+|  |   US-East DC      |         |   EU-West DC      |          |
+|  |                    |         |                    |          |
+|  |  +--------------+ |         |  +--------------+ |          |
+|  |  | App Servers   | |   ◄---- async ---->  | App Servers   | |          |
+|  |  +------+-------+ |  replication |  +------+-------+ |          |
+|  |         |         |         |         |         |          |
+|  |  +------v-------+ |         |  +------v-------+ |          |
+|  |  | Local Redis   | |         |  | Local Redis   | |          |
+|  |  | (Primary for  | |         |  | (Primary for  | |          |
+|  |  |  US users)    | |         |  |  EU users)    | |          |
+|  |  +--------------+ |         |  +--------------+ |          |
+|  +------------------+         +------------------+          |
+|                                                              |
+|  Options:                                                   |
+|  A) Sticky routing — user always hits same DC (simple)     |
+|  B) Async sync — each DC syncs counters (slightly loose)   |
+|  C) Global Redis — single source of truth (high latency)   |
+|                                                              |
+|  Recommendation: Option B with gossip protocol              |
+|  Acceptable to allow ~2x burst across DCs briefly           |
++-------------------------------------------------------------+
 ```
 
 ---
@@ -793,24 +793,24 @@ Cons: Redis becomes bottleneck, cross-AZ latency
 
 ### Fail Open vs Fail Closed
 ```
-┌────────────────────────────────────────────────────┐
-│           Redis Down — What Do We Do?               │
-│                                                     │
-│  Fail Open (allow all traffic):                    │
-│  ✅ High availability — service stays up           │
-│  ❌ No protection during outage                    │
-│  → Best for: non-critical rate limits              │
-│                                                     │
-│  Fail Closed (reject all traffic):                 │
-│  ✅ Strict protection maintained                   │
-│  ❌ Self-inflicted outage                          │
-│  → Best for: payment/billing rate limits           │
-│                                                     │
-│  Hybrid (recommended):                             │
-│  → Fall back to local in-memory rate limiter       │
-│  → Less accurate but still provides protection     │
-│  → Per-server limit = global limit / N servers     │
-└────────────────────────────────────────────────────┘
++----------------------------------------------------+
+|           Redis Down — What Do We Do?               |
+|                                                     |
+|  Fail Open (allow all traffic):                    |
+|  ✅ High availability — service stays up           |
+|  ❌ No protection during outage                    |
+|  → Best for: non-critical rate limits              |
+|                                                     |
+|  Fail Closed (reject all traffic):                 |
+|  ✅ Strict protection maintained                   |
+|  ❌ Self-inflicted outage                          |
+|  → Best for: payment/billing rate limits           |
+|                                                     |
+|  Hybrid (recommended):                             |
+|  → Fall back to local in-memory rate limiter       |
+|  → Less accurate but still provides protection     |
+|  → Per-server limit = global limit / N servers     |
++----------------------------------------------------+
 ```
 
 ---
@@ -818,28 +818,28 @@ Cons: Redis becomes bottleneck, cross-AZ latency
 ## 14. Rate Limiting Strategies by Use Case
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Use Case                │ Algorithm       │ Scope           │
-├──────────────────────────┼─────────────────┼─────────────────┤
-│  Public API              │ Token Bucket    │ Per API Key     │
-│  (Stripe, GitHub)        │                 │ + Per Endpoint  │
-├──────────────────────────┼─────────────────┼─────────────────┤
-│  Login / Auth            │ Sliding Window  │ Per IP + Per    │
-│  (brute force protect)   │ Counter         │ Username        │
-├──────────────────────────┼─────────────────┼─────────────────┤
-│  CDN / Static Assets     │ Leaky Bucket    │ Per IP          │
-│                          │                 │                 │
-├──────────────────────────┼─────────────────┼─────────────────┤
-│  Internal Microservices  │ Token Bucket    │ Per Service     │
-│  (service-to-service)    │                 │ (circuit breaker│
-│                          │                 │  pattern)       │
-├──────────────────────────┼─────────────────┼─────────────────┤
-│  E-commerce Checkout     │ Sliding Window  │ Per User +      │
-│  (inventory protection)  │ Counter         │ Per Product     │
-├──────────────────────────┼─────────────────┼─────────────────┤
-│  Webhook Delivery        │ Leaky Bucket    │ Per Destination │
-│  (protect downstream)    │                 │ URL             │
-└──────────────────────────┴─────────────────┴─────────────────┘
++--------------------------------------------------------------+
+|  Use Case                | Algorithm       | Scope           |
++--------------------------+-----------------+-----------------+
+|  Public API              | Token Bucket    | Per API Key     |
+|  (Stripe, GitHub)        |                 | + Per Endpoint  |
++--------------------------+-----------------+-----------------+
+|  Login / Auth            | Sliding Window  | Per IP + Per    |
+|  (brute force protect)   | Counter         | Username        |
++--------------------------+-----------------+-----------------+
+|  CDN / Static Assets     | Leaky Bucket    | Per IP          |
+|                          |                 |                 |
++--------------------------+-----------------+-----------------+
+|  Internal Microservices  | Token Bucket    | Per Service     |
+|  (service-to-service)    |                 | (circuit breaker|
+|                          |                 |  pattern)       |
++--------------------------+-----------------+-----------------+
+|  E-commerce Checkout     | Sliding Window  | Per User +      |
+|  (inventory protection)  | Counter         | Per Product     |
++--------------------------+-----------------+-----------------+
+|  Webhook Delivery        | Leaky Bucket    | Per Destination |
+|  (protect downstream)    |                 | URL             |
++--------------------------+-----------------+-----------------+
 ```
 
 ---
@@ -861,69 +861,69 @@ Cons: Redis becomes bottleneck, cross-AZ latency
 ## 16. Production Architecture (Full)
 
 ```
-                              ┌──────────────────┐
-                              │   DNS / CDN       │
-                              │  (CloudFlare)     │
-                              │  L3/L4 DDoS      │
-                              │  protection       │
-                              └────────┬─────────┘
-                                       │
-                              ┌────────▼─────────┐
-                              │  Load Balancer    │
-                              │  (L7, sticky     │
-                              │   by API key)    │
-                              └────────┬─────────┘
-                                       │
-               ┌───────────────────────┼───────────────────────┐
-               ▼                       ▼                       ▼
-      ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-      │   App Server 1   │   │   App Server 2   │   │   App Server N   │
-      │                   │   │                   │   │                   │
-      │ ┌───────────────┐ │   │ ┌───────────────┐ │   │ ┌───────────────┐ │
-      │ │ Rate Limiter  │ │   │ │ Rate Limiter  │ │   │ │ Rate Limiter  │ │
-      │ │ Middleware    │ │   │ │ Middleware    │ │   │ │ Middleware    │ │
-      │ │               │ │   │ │               │ │   │ │               │ │
-      │ │ ┌───────────┐ │ │   │ │ ┌───────────┐ │ │   │ │ ┌───────────┐ │ │
-      │ │ │Local Cache│ │ │   │ │ │Local Cache│ │ │   │ │ │Local Cache│ │ │
-      │ │ │(hot keys) │ │ │   │ │ │(hot keys) │ │ │   │ │ │(hot keys) │ │ │
-      │ │ └───────────┘ │ │   │ │ └───────────┘ │ │   │ │ └───────────┘ │ │
-      │ └───────┬───────┘ │   │ └───────┬───────┘ │   │ └───────┬───────┘ │
-      │         │         │   │         │         │   │         │         │
-      │ ┌───────▼───────┐ │   │         │         │   │         │         │
-      │ │ Rules Cache   │ │   │         │         │   │         │         │
-      │ │ (refreshed    │ │   │         │         │   │         │         │
-      │ │  every 30s)   │ │   │         │         │   │         │         │
-      │ └───────────────┘ │   │         │         │   │         │         │
-      └─────────┬─────────┘   └─────────┬─────────┘   └─────────┬─────────┘
-                │                       │                       │
-                └───────────────────────┼───────────────────────┘
-                                        │
-                           ┌────────────▼────────────┐
-                           │     Redis Cluster        │
-                           │     (6 nodes,            │
-                           │      3 masters +         │
-                           │      3 replicas)         │
-                           │                          │
-                           │  Persistence: RDB + AOF  │
-                           │  Eviction: volatile-lru   │
-                           └────────────┬─────────────┘
-                                        │
-                           ┌────────────▼────────────┐
-                           │   Rules Config Store     │
-                           │   (PostgreSQL / etcd)    │
-                           │                          │
-                           │   Admin Dashboard for    │
-                           │   rule CRUD operations   │
-                           └──────────────────────────┘
-                                        │
-                           ┌────────────▼────────────┐
-                           │   Monitoring / Alerting  │
-                           │                          │
-                           │  - Throttle rate by rule │
-                           │  - Redis latency p99     │
-                           │  - Top throttled clients │
-                           │  - Rule hit counts       │
-                           └──────────────────────────┘
+                              +------------------+
+                              |   DNS / CDN       |
+                              |  (CloudFlare)     |
+                              |  L3/L4 DDoS      |
+                              |  protection       |
+                              +--------+---------+
+                                       |
+                              +--------v---------+
+                              |  Load Balancer    |
+                              |  (L7, sticky     |
+                              |   by API key)    |
+                              +--------+---------+
+                                       |
+               +-----------------------+-----------------------+
+               v                       v                       v
+      +-----------------+   +-----------------+   +-----------------+
+      |   App Server 1   |   |   App Server 2   |   |   App Server N   |
+      |                   |   |                   |   |                   |
+      | +---------------+ |   | +---------------+ |   | +---------------+ |
+      | | Rate Limiter  | |   | | Rate Limiter  | |   | | Rate Limiter  | |
+      | | Middleware    | |   | | Middleware    | |   | | Middleware    | |
+      | |               | |   | |               | |   | |               | |
+      | | +-----------+ | |   | | +-----------+ | |   | | +-----------+ | |
+      | | |Local Cache| | |   | | |Local Cache| | |   | | |Local Cache| | |
+      | | |(hot keys) | | |   | | |(hot keys) | | |   | | |(hot keys) | | |
+      | | +-----------+ | |   | | +-----------+ | |   | | +-----------+ | |
+      | +-------+-------+ |   | +-------+-------+ |   | +-------+-------+ |
+      |         |         |   |         |         |   |         |         |
+      | +-------v-------+ |   |         |         |   |         |         |
+      | | Rules Cache   | |   |         |         |   |         |         |
+      | | (refreshed    | |   |         |         |   |         |         |
+      | |  every 30s)   | |   |         |         |   |         |         |
+      | +---------------+ |   |         |         |   |         |         |
+      +---------+---------+   +---------+---------+   +---------+---------+
+                |                       |                       |
+                +-----------------------+-----------------------+
+                                        |
+                           +------------v------------+
+                           |     Redis Cluster        |
+                           |     (6 nodes,            |
+                           |      3 masters +         |
+                           |      3 replicas)         |
+                           |                          |
+                           |  Persistence: RDB + AOF  |
+                           |  Eviction: volatile-lru   |
+                           +------------+-------------+
+                                        |
+                           +------------v------------+
+                           |   Rules Config Store     |
+                           |   (PostgreSQL / etcd)    |
+                           |                          |
+                           |   Admin Dashboard for    |
+                           |   rule CRUD operations   |
+                           +--------------------------+
+                                        |
+                           +------------v------------+
+                           |   Monitoring / Alerting  |
+                           |                          |
+                           |  - Throttle rate by rule |
+                           |  - Redis latency p99     |
+                           |  - Top throttled clients |
+                           |  - Rule hit counts       |
+                           +--------------------------+
 ```
 
 ---
